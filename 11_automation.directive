@@ -1,0 +1,61 @@
+' 11_automation.directive
+' AutoIt-style desktop automation plus a cross-platform WAV combiner.
+'   Mouse / Screen / Sound  -> Windows-only (Win32 input, GDI, winmm)
+'   WavWriter               -> works on every platform (pure file I/O)
+' On Linux/macOS the Windows-only objects report that they need the Windows
+' build; this script is written to run cleanly either way.
+
+On Error Resume Next
+
+directive.echo "=== Screen ==="
+Dim scr : Set scr = New Screen
+If Err.Number <> 0 Then
+    directive.echo "  (Windows-only: " & Err.Description & ")" : Err.Clear
+Else
+    directive.echo "  size: " & scr.Width & "x" & scr.Height
+    directive.echo "  pixel at 10,10 = 0x" & Hex(scr.PixelColor(10, 10))
+End If
+
+directive.echo "=== Mouse ==="
+Dim ms : Set ms = New Mouse
+Dim px : px = ms.X
+If Err.Number <> 0 Then
+    directive.echo "  (Windows-only)" : Err.Clear
+Else
+    directive.echo "  cursor at " & ms.X & "," & ms.Y
+    ms.Move 300, 300          ' add a 3rd arg (1-10) for smooth motion
+    ms.Click "left"           ' Click([button],[x],[y],[count])
+    directive.echo "  moved to 300,300 and left-clicked"
+End If
+
+directive.echo "=== Sound ==="
+Dim snd : Set snd = New Sound
+snd.Beep 880, 150
+If Err.Number <> 0 Then
+    directive.echo "  (Windows-only)" : Err.Clear
+Else
+    directive.echo "  beeped. snd.Play ""x.wav""       plays asynchronously"
+    directive.echo "          snd.Play ""x.wav"", True  waits until it finishes"
+End If
+
+directive.echo "=== Clipboard ==="
+ClipPut "copied by Directive"
+If Err.Number <> 0 Then
+    directive.echo "  (Windows-only)" : Err.Clear
+Else
+    directive.echo "  clipboard now holds: [" & ClipGet() & "]"
+End If
+
+directive.echo "=== WavWriter (all platforms) ==="
+Dim fso : Set fso = New FileSystem
+If fso.FileExists("a.wav") And fso.FileExists("b.wav") Then
+    Dim w : Set w = New WavWriter
+    w.Create "combined.wav"
+    w.Append "a.wav"          ' first file fixes the format
+    w.Append "b.wav"          ' must match channels / sample-rate / bit-depth
+    directive.echo "  combined length: " & FormatNumber(w.Duration, 2) & " sec"
+    w.Close
+    directive.echo "  wrote combined.wav"
+Else
+    directive.echo "  put same-format a.wav and b.wav beside this script to combine them"
+End If

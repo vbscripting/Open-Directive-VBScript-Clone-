@@ -1,0 +1,31 @@
+' 05_list - the native linked list (Set x = New List)
+Option Explicit
+Dim L : Set L = New List
+L.Add "alpha"
+L.Add "gamma"
+L.Insert 1, "beta"            ' alpha, beta, gamma
+Directive.Echo "list:  " & Join(L.ToArray(), ", ")
+Directive.Echo "count: " & L.Count & ", item(1): " & L(1)
+
+L.Swap 0, 2                    ' gamma, beta, alpha
+Directive.Echo "swapped:  " & Join(L.ToArray(), ", ")
+L.Reverse                      ' alpha, beta, gamma
+Directive.Echo "reversed: " & Join(L.ToArray(), ", ")
+
+Directive.Echo "indexOf(beta) = " & L.IndexOf("beta")
+Directive.Echo "contains(x)   = " & L.Contains("x")
+L.Remove "beta"
+Directive.Echo "after remove: " & Join(L.ToArray(), ", ")
+
+' iterate
+Dim item
+For Each item In L
+    Directive.Echo "  - " & item
+Next
+
+' numbers + sort
+Dim nums : Set nums = New List
+nums.Add 5 : nums.Add 3 : nums.Add 9 : nums.Add 1
+nums.Sort
+Directive.Echo "sorted: " & Join(nums.ToArray(), ", ")
+Directive.Echo "first=" & nums.First & " last=" & nums.Last

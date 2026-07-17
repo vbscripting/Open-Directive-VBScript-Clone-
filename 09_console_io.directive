@@ -1,0 +1,12 @@
+' 09_console_io - Directive.StdOut / StdIn / StdErr (console build)
+' Run from a console:  directive 09_console_io.directive
+Option Explicit
+Directive.StdOut.Write "What is your name? "
+Dim name : name = Directive.StdIn.ReadLine
+Directive.StdOut.WriteLine "Hello, " & name & "!"
+
+Directive.StdOut.Write "Enter a number: "
+Dim n : n = CInt(Directive.StdIn.ReadLine)
+Directive.StdOut.WriteLine "Its square is " & (n * n)
+
+Directive.StdErr.WriteLine "(this line went to standard error)"

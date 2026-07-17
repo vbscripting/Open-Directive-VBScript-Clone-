@@ -1,0 +1,31 @@
+' 07_files - FileSystem + File/Folder objects (Set fso = New FileSystem)
+Option Explicit
+Dim fso : Set fso = New FileSystem
+
+' build a small tree
+If Not fso.FolderExists("demo") Then fso.CreateFolder "demo"
+Dim f : Set f = fso.CreateTextFile("demo\notes.txt")
+f.WriteLine "line one"
+f.WriteLine "line two"
+f.Close
+
+' Folder object + its Files collection
+Dim folder : Set folder = fso.GetFolder("demo")
+Directive.Echo "folder:      " & folder.Name
+Directive.Echo "file count:  " & folder.Files.Count
+Dim file
+For Each file In folder.Files
+    Directive.Echo "  " & file.Name & " (" & file.Size & " bytes)"
+Next
+
+' File object: read it back
+Dim doc : Set doc = fso.GetFile("demo\notes.txt")
+Dim ts : Set ts = doc.OpenAsTextStream(1)      ' 1 = read
+Directive.Echo "first line:  " & ts.ReadLine
+ts.Close
+
+' copy, then clean up the whole tree
+doc.Copy "demo\notes_backup.txt"
+Directive.Echo "backup made: " & fso.FileExists("demo\notes_backup.txt")
+folder.Delete
+Directive.Echo "cleaned up:  " & (Not fso.FolderExists("demo"))

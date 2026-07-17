@@ -1,0 +1,10 @@
+' 01_hello - basics: variables, output, strings
+Option Explicit
+Dim name, greeting
+name = "World"
+greeting = "Hello, " & name & "!"
+Directive.Echo greeting
+Directive.Echo "Uppercase: " & UCase(greeting)
+Directive.Echo "Length:    " & Len(greeting)
+Directive.Echo "Reversed:  " & StrReverse(greeting)
+Directive.Echo "2 ^ 10 = " & (2 ^ 10)

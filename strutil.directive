@@ -1,0 +1,31 @@
+' strutil.directive — a small library, meant to be pulled in with Include.
+' It only defines things (Const / Function / Class); running it directly does nothing.
+
+Const LIB_VERSION = "1.0"
+
+Function Repeat(s, n)
+    Dim out, i
+    out = ""
+    For i = 1 To n
+        out = out & s
+    Next
+    Repeat = out
+End Function
+
+Function TitleCase(s)
+    Dim words, i
+    words = Split(s, " ")
+    For i = 0 To UBound(words)
+        If Len(words(i)) > 0 Then
+            words(i) = UCase(Left(words(i), 1)) & LCase(Mid(words(i), 2))
+        End If
+    Next
+    TitleCase = Join(words, " ")
+End Function
+
+Class Tally
+    Private total
+    Private Sub Class_Initialize() : total = 0 : End Sub
+    Public Sub Add(n) : total = total + n : End Sub
+    Public Property Get Sum() : Sum = total : End Property
+End Class

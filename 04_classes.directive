@@ -1,0 +1,28 @@
+' 04_classes - Class, properties, methods, Class_Initialize
+Option Explicit
+Class BankAccount
+    Private mBalance
+    Private Sub Class_Initialize
+        mBalance = 0
+    End Sub
+    Public Property Get Balance
+        Balance = mBalance
+    End Property
+    Public Sub Deposit(amount)
+        If amount > 0 Then mBalance = mBalance + amount
+    End Sub
+    Public Function Withdraw(amount)
+        If amount <= mBalance Then
+            mBalance = mBalance - amount
+            Withdraw = True
+        Else
+            Withdraw = False
+        End If
+    End Function
+End Class
+Dim acct : Set acct = New BankAccount
+acct.Deposit 200
+acct.Deposit 50
+Directive.Echo "Balance: $" & acct.Balance
+If acct.Withdraw(75) Then Directive.Echo "Withdrew $75, now $" & acct.Balance
+If Not acct.Withdraw(9999) Then Directive.Echo "Overdraft blocked; still $" & acct.Balance

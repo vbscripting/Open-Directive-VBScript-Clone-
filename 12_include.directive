@@ -1,0 +1,22 @@
+' 12_include.directive — pulling in a library with the native Include.
+'
+' Include is resolved at parse time, so everything the library defines
+' (Const / Function / Class) is available anywhere in this file — even on
+' the line above the Include statement. Paths are resolved relative to THIS
+' file's directory, and a file is only ever included once (safe for diamond
+' and circular includes).
+
+' Used before the Include line below — works because Include is parse-time:
+directive.echo "3 x 'ab' = " & Repeat("ab", 3)
+
+Include "lib/strutil.directive"
+
+directive.echo "library version: " & LIB_VERSION
+directive.echo TitleCase("the quick brown FOX")
+
+Dim t : Set t = New Tally
+t.Add 10 : t.Add 5 : t.Add 25
+directive.echo "tally sum: " & t.Sum
+
+directive.echo "this script: " & directive.ScriptName
+directive.echo "its folder:  " & directive.ScriptPath
