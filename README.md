@@ -79,6 +79,7 @@ dialogs.
 
 ```sh
 ./directive script.directive          # run a file
+./directive script.directive a b c    # run a file, passing arguments
 ./directive -e "Directive.Echo 6*7"   # inline
 ./directive -                         # read from stdin
 ```
@@ -89,6 +90,26 @@ The two I/O modes:
   script; `MsgBox` / `InputBox` / `Directive.Echo` pop up windows.
 - **B — console:** run `directive.exe script.directive` from a terminal and use
   `Directive.Echo`, `Directive.StdOut.Write`, `Directive.StdIn.ReadLine`, etc.
+
+### Command-line arguments
+
+Anything after the script path is exposed to the script through
+`Directive.Arguments`, a 0-based collection (the `WScript.Arguments` equivalent —
+the host is always named `Directive`):
+
+```vbscript
+Directive.Echo "count: " & Directive.Arguments.Count
+Directive.Echo "first: " & Directive.Arguments(0)
+Dim f
+For Each f In Directive.Arguments
+    Directive.Echo f
+Next
+```
+
+To make **drag-and-drop** work on Windows, associate the `.directive` extension
+with `directive.exe "%1" %*` (or `directivew.exe "%1" %*`). The `%*` forwards the
+dropped file paths, so dragging files onto a script delivers their paths as
+`Directive.Arguments`. See `examples/13_arguments.directive`.
 
 ## Error messages
 
