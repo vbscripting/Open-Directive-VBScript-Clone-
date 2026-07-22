@@ -212,7 +212,7 @@ struct ArrayData {
 // -------------------------------------------------------------- IObject
 // Everything you can put a "." after implements this. Both script-defined
 // classes and COM/native objects use it, so member access is uniform.
-struct IObject {
+struct IObject : std::enable_shared_from_this<IObject> {
     virtual ~IObject() = default;
     virtual std::string typeName() const { return "Object"; }
 
@@ -370,7 +370,7 @@ int Value::varType() const {  // subset of VbVarType constants
 
 // ================================================================== LEXER
 enum class Tok {
-    End, Eol, Colon, Ident, Number, String,
+    End, Eol, Colon, Ident, Number, String, DateLit,
     Plus, Minus, Star, Slash, Backslash, Caret, Amp,
     Eq, Ne, Lt, Gt, Le, Ge,
     LParen, RParen, Comma, Dot
@@ -437,6 +437,9 @@ public:
 
             // strings
             if (c == '"') { out.push_back(readString()); continue; }
+
+            // date literals: #2020-03-15#, #1/15/2020 3:45:00 PM#, #13:45:00#
+            if (c == '#') { out.push_back(readDate()); continue; }
 
             // operators / punctuation
             switch (c) {
@@ -532,6 +535,15 @@ private:
         t.str = s;
         return t;
     }
+    Token readDate() {
+        Token t; t.kind = Tok::DateLit; t.line = line; t.col = tokCol;
+        pos++; // opening #
+        std::string s;
+        while (pos < src.size() && src[pos] != '#' && src[pos] != '\n') s += src[pos++];
+        if (pos < src.size() && src[pos] == '#') pos++;   // closing #
+        t.str = s;   // raw contents; parser converts via parseDateToSerial
+        return t;
+    }
 };
 
 // =================================================================== AST
@@ -615,6 +627,7 @@ struct Stmt {
     std::vector<Param> params;
     bool isFunction = false;
     int propKind = 0;     // 0 Get, 1 Let, 2 Set
+    bool isDefault = false;   // marked with the Default keyword (class default member)
 
     // Class
     std::vector<StmtP> members;
@@ -630,6 +643,9 @@ struct Stmt {
 };
 
 // ================================================================== PARSER
+// parseDateToSerial is defined in the interpreter section; the parser needs it for #date# literals.
+static bool parseDateToSerial(const std::string& in, double& out);
+
 class Parser {
     std::vector<Token> t;
     size_t p = 0;
@@ -673,7 +689,7 @@ private:
     }
     static bool canStartExpr(const Token& tk) {
         switch (tk.kind) {
-            case Tok::Number: case Tok::String: case Tok::LParen:
+            case Tok::Number: case Tok::String: case Tok::DateLit: case Tok::LParen:
             case Tok::Minus: case Tok::Plus: case Tok::Ident: case Tok::Dot:
                 return true;
             default: return false;
@@ -773,12 +789,21 @@ private:
                                     return s; }
             if (kw == "public" || kw == "private") {
                 adv();
-                if (isKw("sub"))      { if (inProc) err("a Sub cannot be defined inside another procedure"); return parseProc(false); }
-                if (isKw("function")) { if (inProc) err("a Function cannot be defined inside another procedure"); return parseProc(true); }
-                if (isKw("property")) { if (inProc) err("a Property cannot be defined inside another procedure"); if (!inClass) err("Property Get/Let/Set is only valid inside a Class"); return parseProperty(); }
+                bool isDef = false;
+                if (isKw("default")) { adv(); isDef = true; }   // Public Default Property/Function/Sub
+                if (isKw("sub"))      { if (inProc) err("a Sub cannot be defined inside another procedure"); return parseProc(false, isDef); }
+                if (isKw("function")) { if (inProc) err("a Function cannot be defined inside another procedure"); return parseProc(true, isDef); }
+                if (isKw("property")) { if (inProc) err("a Property cannot be defined inside another procedure"); if (!inClass) err("Property Get/Let/Set is only valid inside a Class"); return parseProperty(isDef); }
                 if (isKw("class"))    { if (inProc || inClass) err("a Class cannot be defined inside a procedure or another Class"); return parseClass(); }
                 if (isKw("const"))    return parseConst();
                 return parseDim(false);   // Public/Private x, y  (treated like Dim)
+            }
+            if (kw == "default") {   // Default [on its own] implies Public
+                adv();
+                if (isKw("property")) { if (inProc) err("a Property cannot be defined inside another procedure"); if (!inClass) err("Property Get/Let/Set is only valid inside a Class"); return parseProperty(true); }
+                if (isKw("function")) { if (inProc) err("a Function cannot be defined inside another procedure"); return parseProc(true, true); }
+                if (isKw("sub"))      { if (inProc) err("a Sub cannot be defined inside another procedure"); return parseProc(false, true); }
+                err("Default must be followed by Property, Function, or Sub");
             }
         }
         return parseAssignOrCall();
@@ -972,10 +997,11 @@ private:
         expect(Tok::RParen, ")");
         return ps;
     }
-    StmtP parseProc(bool isFunc) {
+    StmtP parseProc(bool isFunc, bool isDefault = false) {
         int ln = cur().line; adv();
         auto s = mk(isFunc ? Stmt::FuncDecl : Stmt::SubDecl, ln);
         s->isFunction = isFunc;
+        s->isDefault = isDefault;
         s->name = ident("procedure name");
         s->lname = toLower(s->name);
         if (is(Tok::LParen)) s->params = parseParams();
@@ -987,9 +1013,10 @@ private:
         expectKw(isFunc ? "function" : "sub");
         return s;
     }
-    StmtP parseProperty() {
+    StmtP parseProperty(bool isDefault = false) {
         int ln = cur().line; adv();
         auto s = mk(Stmt::PropDecl, ln);
+        s->isDefault = isDefault;
         if (isKw("get")) { s->propKind = 0; adv(); }
         else if (isKw("let")) { s->propKind = 1; adv(); }
         else if (isKw("set")) { s->propKind = 2; adv(); }
@@ -1130,6 +1157,7 @@ private:
     ExprP parsePrimary() {
         if (is(Tok::Number)) { Value v = cur().num; adv(); return mkLit(v); }
         if (is(Tok::String)) { std::string s = cur().str; adv(); return mkLit(Value::str(s)); }
+        if (is(Tok::DateLit)) { double ser; if (!parseDateToSerial(cur().str, ser)) err("Invalid date literal '#" + cur().str + "#'"); adv(); return mkLit(Value::number(ser)); }
         if (is(Tok::Dot))    { adv(); return mkMember(nullptr, ident("member name")); }  // With-member
         if (is(Tok::LParen)) { adv(); auto e = parseExpr(); expect(Tok::RParen, ")"); return e; }
         if (is(Tok::Ident)) {
@@ -1231,7 +1259,8 @@ struct DirectiveObject : IObject {
     std::string scriptFullName;                 // absolute path of the running script ("" for -e/stdin)
     std::string scriptDir;                       // directory containing the script (AutoIt @ScriptDir)
     std::string typeName() const override { return "Directive"; }
-    Value get(Interpreter&, const std::string& name, std::vector<Value>& args) override {
+    Value get(Interpreter& in, const std::string& name, std::vector<Value>& args) override {
+        (void)in;
         std::string n = toLower(name);
         if (n == "echo") {
             std::string out;
@@ -1321,6 +1350,21 @@ struct ListObject : IObject {
 };
 
 // ---- Scripting.Dictionary ----
+// VBScript Dictionary keys are typed: numeric 1 and string "1" are different keys,
+// and object keys compare by identity. Encode type + value so they don't collide.
+static std::string dictKey(const Value& v) {
+    switch (v.type) {
+        case Value::Type::Empty:  return "\x01""e";
+        case Value::Type::Null:   return "\x01""z";
+        case Value::Type::Bool:   return std::string("\x01""b") + (v.b ? "1" : "0");
+        case Value::Type::Int:
+        case Value::Type::Double: return "\x01""n" + v.toStr();          // 1 and 1.0 → same numeric key
+        case Value::Type::String: return "\x01""s" + v.s;
+        case Value::Type::Object: { char b[24]; std::snprintf(b, sizeof(b), "\x01o%p", (void*)v.obj.get()); return b; }
+        default:                  return "\x01?" + v.toStr();
+    }
+}
+
 struct DictionaryObject : IObject {
     std::vector<std::pair<Value, Value>> entries;      // insertion order
     std::unordered_map<std::string, size_t> index;
@@ -1329,24 +1373,24 @@ struct DictionaryObject : IObject {
         std::string n = toLower(name);
         if (n.empty() || n == "item") {                // default property
             if (args.empty()) raiseErr(450, "Wrong number of arguments");
-            auto it = index.find(args[0].toStr());
+            auto it = index.find(dictKey(args[0]));
             return it == index.end() ? Value::empty() : entries[it->second].second;
         }
         if (n == "add") {
             if (args.size() < 2) raiseErr(450, "Wrong number of arguments");
-            std::string k = args[0].toStr();
+            std::string k = dictKey(args[0]);
             if (index.count(k)) raiseErr(457, "This key is already associated with an element of this collection");
             index[k] = entries.size();
             entries.push_back({ args[0], args[1] });
             return Value::empty();
         }
-        if (n == "exists") return Value::boolean(!args.empty() && index.count(args[0].toStr()) > 0);
+        if (n == "exists") return Value::boolean(!args.empty() && index.count(dictKey(args[0])) > 0);
         if (n == "keys")   { std::vector<Value> v; for (auto& e : entries) v.push_back(e.first);  return makeArray(v); }
         if (n == "items")  { std::vector<Value> v; for (auto& e : entries) v.push_back(e.second); return makeArray(v); }
         if (n == "count")  return Value::integer((int32_t)entries.size());
         if (n == "remove") {
             if (args.empty()) raiseErr(450, "Wrong number of arguments");
-            std::string k = args[0].toStr();
+            std::string k = dictKey(args[0]);
             auto it = index.find(k);
             if (it == index.end()) raiseErr(32811, "Element not found");
             entries.erase(entries.begin() + it->second);
@@ -1361,7 +1405,7 @@ struct DictionaryObject : IObject {
         std::string n = toLower(name);
         if (n.empty() || n == "item") {                // d(key) = v  or  d.Item(key) = v
             if (args.empty()) raiseErr(450, "Wrong number of arguments");
-            std::string k = args[0].toStr();
+            std::string k = dictKey(args[0]);
             auto it = index.find(k);
             if (it == index.end()) { index[k] = entries.size(); entries.push_back({ args[0], v }); }
             else entries[it->second].second = v;
@@ -1375,7 +1419,7 @@ struct DictionaryObject : IObject {
         return true;
     }
 private:
-    void reindex() { index.clear(); for (size_t k = 0; k < entries.size(); ++k) index[entries[k].first.toStr()] = k; }
+    void reindex() { index.clear(); for (size_t k = 0; k < entries.size(); ++k) index[dictKey(entries[k].first)] = k; }
 };
 
 // ---- RegExp (VBScript.RegExp) with a compact Match/Matches model ----
@@ -1935,6 +1979,7 @@ struct ClassInfo {
     std::vector<std::string> fields;                       // field names (original case)
     std::unordered_map<std::string, StmtP> methods;        // lower -> Sub/Function
     std::unordered_map<std::string, StmtP> propGet, propLet, propSet;
+    std::string defaultMember;                             // lower name of the Default member ("" if none)
 };
 
 // ---- an instance of a script-defined class ----
@@ -1947,6 +1992,7 @@ struct ClassInstance : IObject {
     Value get(Interpreter& in, const std::string& name, std::vector<Value>& args) override;
     void set(Interpreter& in, const std::string& name, std::vector<Value>& args,
              const Value& val, bool isSet) override;
+    bool tryDefault(Interpreter& in, Value& out) override;   // fires the Default member (defined below)
 };
 
 class Interpreter {
@@ -2140,7 +2186,12 @@ private:
     Value eval(Expr* e) {
         switch (e->k) {
             case Expr::Lit: return e->lit;
-            case Expr::Var: return getVarValueL(e->lname);
+            case Expr::Var:
+                if (e->lname == "me") {
+                    if (instanceStack.empty()) raiseErr(91, "'Me' is only valid inside a class");
+                    return Value::object(instanceStack.back()->shared_from_this());
+                }
+                return getVarValueL(e->lname);
             case Expr::Unary: return unaryOp(e->name, eval(e->a.get()));
             case Expr::Binary: return binOp(e->name, eval(e->a.get()), eval(e->b.get()));
             case Expr::New: return evalNew(e->name);
@@ -2217,13 +2268,21 @@ private:
         if (v.type == Value::Type::Bool) return Value::boolean(!v.b);
         return Value::integer((int32_t)(~v.toI64()));
     }
-    Value binOp(const std::string& op, const Value& a, const Value& b) {
-        if (op == "&") return Value::str(a.toConcatStr() + b.toConcatStr());
+    // Resolve an object to its default property/value in a value context (VBScript
+    // uses the class's Default member here). Non-objects pass through unchanged.
+    Value defaultValue(const Value& v) {
+        if (v.isObject() && v.obj) { Value out; if (v.obj->tryDefault(*this, out)) return out; }
+        return v;
+    }
+    Value binOp(const std::string& op, const Value& aRaw, const Value& bRaw) {
         if (op == "Is") {
-            IObject* pa = a.isObject() ? a.obj.get() : nullptr;
-            IObject* pb = b.isObject() ? b.obj.get() : nullptr;
+            IObject* pa = aRaw.isObject() ? aRaw.obj.get() : nullptr;
+            IObject* pb = bRaw.isObject() ? bRaw.obj.get() : nullptr;
             return Value::boolean(pa == pb);
         }
+        // Every other operator works on values: an object yields its default member.
+        Value a = defaultValue(aRaw), b = defaultValue(bRaw);
+        if (op == "&") return Value::str(a.toConcatStr() + b.toConcatStr());
         if (op == "And" || op == "Or" || op == "Xor" || op == "Eqv" || op == "Imp") {
             if (a.isNull() || b.isNull()) return Value::null();
             if (a.type == Value::Type::Bool && b.type == Value::Type::Bool) {
@@ -2561,6 +2620,7 @@ private:
                 else if (m->propKind == 1) ci->propLet[toLower(m->name)] = m;
                 else ci->propSet[toLower(m->name)] = m;
             }
+            if (m->isDefault) ci->defaultMember = toLower(m->name);
         }
         classes[toLower(c->name)] = ci;
     }
@@ -2604,10 +2664,35 @@ Value Interpreter::makeFuncRef(const std::string& name) {
 
 ClassInstance::~ClassInstance() { if (interp) interp->runTerminator(this); }
 
+bool ClassInstance::tryDefault(Interpreter& in, Value& out) {
+    if (!cls || cls->defaultMember.empty()) return false;
+    std::vector<Value> none;
+    out = get(in, std::string(), none);   // "" routes to the default member
+    return true;
+}
+
 Value ClassInstance::get(Interpreter& in, const std::string& name, std::vector<Value>& args) {    std::string low = toLower(name);
     auto& ci = *cls;
-    auto pg = ci.propGet.find(low); if (pg != ci.propGet.end()) return in.callClassMethod(this, pg->second, args);
-    auto m  = ci.methods.find(low); if (m  != ci.methods.end()) return in.callClassMethod(this, m->second, args);
+    // Empty member name => the class's Default member (for `o(args)` / value coercion).
+    if (low.empty() && !ci.defaultMember.empty()) low = ci.defaultMember;
+    auto pg = ci.propGet.find(low);
+    auto m  = ci.methods.find(low);
+    if (pg != ci.propGet.end() || m != ci.methods.end()) {
+        StmtP decl = (pg != ci.propGet.end()) ? pg->second : m->second;
+        size_t np = decl->params.size();
+        if (args.size() > np) {
+            // More arguments than the member declares: call it with the args it
+            // expects, then apply the leftover args to the RESULT (VBScript treats
+            // `obj.Prop(i)` on a no-arg getter as indexing the returned value).
+            std::vector<Value> head(args.begin(), args.begin() + np);
+            Value r = in.callClassMethod(this, decl, head);
+            std::vector<Value> tail(args.begin() + np, args.end());
+            if (r.isArray())                    return in.arrayGetPub(r, tail);
+            if (r.isObject() && r.obj)          return r.obj->get(in, "", tail);
+            raiseErr(13, "Type mismatch");
+        }
+        return in.callClassMethod(this, decl, args);
+    }
     auto f  = fields.find(low);
     if (f != fields.end()) {
         if (args.empty()) return f->second;
@@ -2742,8 +2827,18 @@ void Interpreter::registerBuiltins() {
         return Value::str(head+out); };
     B["split"]  = [=](Interpreter&, std::vector<Value>& a){
         std::string s=S(a,0); std::string delim = has(a,1)?S(a,1):" ";
-        std::vector<Value> parts; if(delim.empty()){ parts.push_back(Value::str(s)); return makeArray(parts);} 
-        size_t pos=0,f; while((f=s.find(delim,pos))!=std::string::npos){ parts.push_back(Value::str(s.substr(pos,f-pos))); pos=f+delim.size(); }
+        long count = has(a,2) ? (long)N(a,2) : -1;      // max number of substrings (-1 = all)
+        int cmp = has(a,3) ? (int)N(a,3) : 0;            // 0 binary, 1 text (case-insensitive)
+        std::vector<Value> parts;
+        if(count==0) return makeArray(parts);            // count 0 -> empty array
+        if(delim.empty()){ parts.push_back(Value::str(s)); return makeArray(parts); }
+        std::string hay = (cmp==1) ? lower(s) : s;
+        std::string ndl = (cmp==1) ? lower(delim) : delim;
+        size_t pos=0,f;
+        while((f=hay.find(ndl,pos))!=std::string::npos){
+            if(count>0 && (long)parts.size()==count-1) break;   // limit reached; remainder is final element
+            parts.push_back(Value::str(s.substr(pos,f-pos))); pos=f+delim.size();
+        }
         parts.push_back(Value::str(s.substr(pos))); return makeArray(parts); };
     B["join"]   = [=](Interpreter&, std::vector<Value>& a){
         if(a.empty()||!a[0].isArray()) raiseErr(13,"Type mismatch (Join expects an array)");
@@ -2814,6 +2909,8 @@ void Interpreter::registerBuiltins() {
     B["weekday"]=[=](Interpreter&, std::vector<Value>& a){ long dd=(long)std::floor(D(a,0))+kBaseDay; int dow=(int)(((dd%7)+7+4)%7); return Value::integer(dow+1); };
     B["dateserial"]=[=](Interpreter&, std::vector<Value>& a){ return Value::number(serialFromYMDHMS((int)N(a,0),(int)N(a,1),(int)N(a,2),0,0,0)); };
     B["timeserial"]=[=](Interpreter&, std::vector<Value>& a){ return Value::number(serialFromYMDHMS(1899,12,30,(int)N(a,0),(int)N(a,1),(int)N(a,2))); };
+    B["datevalue"]=[=](Interpreter&, std::vector<Value>& a){ double o; if(a.empty())raiseErr(13,"Type mismatch"); if(a[0].looksNumeric())o=a[0].toDouble(); else if(!parseDateToSerial(a[0].toStr(),o))raiseErr(13,"Type mismatch"); return Value::number(std::floor(o)); };   // date part only
+    B["timevalue"]=[=](Interpreter&, std::vector<Value>& a){ double o; if(a.empty())raiseErr(13,"Type mismatch"); if(a[0].looksNumeric())o=a[0].toDouble(); else if(!parseDateToSerial(a[0].toStr(),o))raiseErr(13,"Type mismatch"); double f=o-std::floor(o); if(f<0)f+=1.0; return Value::number(f); };   // time-of-day fraction
     B["dateadd"]=[=](Interpreter&, std::vector<Value>& a){ std::string iv=lower(S(a,0)); double num=D(a,1); double ser=D(a,2); int y,mo,d,h,mi,se; ymdhmsFromSerial(ser,y,mo,d,h,mi,se);
         if(iv=="yyyy")y+=(int)num; else if(iv=="m"){int t=(mo-1)+(int)num; y+=t/12; mo=t%12+1; if(mo<1){mo+=12;y--;}} else if(iv=="d")ser+=num; else if(iv=="ww")ser+=num*7; else if(iv=="h")ser+=num/24.0; else if(iv=="n")ser+=num/1440.0; else if(iv=="s")ser+=num/86400.0; else raiseErr(5,"Invalid interval");
         if(iv=="yyyy"||iv=="m"){ return Value::number(serialFromYMDHMS(y,mo,d,h,mi,se)); }
