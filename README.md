@@ -258,10 +258,12 @@ Everything VBScript-ish you'd expect: `Option Explicit`, `Dim`/`Public`/`Private
 `If/ElseIf/Else` (block and single-line), `For/Next` (+`Step`), `For Each`,
 `Do/Loop` (all forms), `While/Wend`, `Select Case` (lists, `Is`, `To` ranges),
 `With`, `Exit`, `Sub`/`Function` with `ByRef`/`ByVal`, `Class` with
-`Property Get/Let/Set`, `Class_Initialize`/`Class_Terminate`, `On Error Resume Next`/`Err`, and
-~85 built-in functions (strings, conversion, math, dates, arrays, type checks,
+`Property Get/Let/Set`, `Public Default` members, `Me`, `Class_Initialize`/
+`Class_Terminate`, `#...#` date literals, `On Error Resume Next`/`Err`, and
+~90 built-in functions (strings, conversion, math, dates, arrays, type checks,
 plus `Eval`, `GetRef`, `Erase`, `MonthName`/`WeekdayName`, `FormatNumber`/
-`FormatCurrency`/`FormatPercent`, `DatePart`, `ScriptEngine`, `ClipPut`/`ClipGet`).
+`FormatCurrency`/`FormatPercent`, `DatePart`, `DateValue`/`TimeValue`,
+`ScriptEngine`, `ClipPut`/`ClipGet`).
 The `vb*` constants (`vbCrLf`, `vbTab`, `vbTextCompare`, …) are kept.
 
 ## Examples
@@ -302,11 +304,22 @@ in one file.
   **reference cycle** (objects holding `Set` references to each other): the cycle
   is never collected, so it neither terminates nor frees — the same behavior COM/
   VBScript had. Break cycles (`Set a.other = Nothing`) if you need the terminators.
-- Dates are stored as OLE serial doubles, so `TypeName` reports a date-valued
-  number as a number. `Rnd` isn't bit-identical to VBScript's.
+- Dates are stored as OLE serial doubles. `#...#` date literals, `DateValue`/
+  `TimeValue`, and all the date functions work, but because there's no distinct
+  Date subtype, `TypeName` of a date reports `Double` and `IsDate(#...#)` is
+  `False` (the literal is already a number). `Rnd` isn't bit-identical to
+  VBScript's.
 - File/Folder `DateCreated`/`DateLastAccessed` report the last-modified time
   (portable `std::filesystem` exposes only that); `Attributes` are approximated on
   non-Windows.
+- **`Private` class members aren't access-controlled.** They work correctly
+  inside the class, but reading one from outside returns `Empty` rather than
+  raising an error the way strict VBScript would. Treat `Private` as a
+  convention here, not an enforced boundary.
+- **Leading-dot argument to a paren-less call.** Because the lexer discards
+  whitespace, `Directive.Echo .Member` inside a `With` parses as member chaining
+  (`Directive.Echo.Member`) and fails. Parenthesize the argument instead:
+  `Directive.Echo(.Member)`.
 - **Verification status of the automation objects.** The `WavWriter` combiner and
   the `ClipPut`/`ClipGet` clipboard functions are tested (both natively where
   applicable and through the Windows `.exe`). `Mouse`, `Screen`, and `Sound` are
@@ -316,9 +329,9 @@ in one file.
 
 ## Safety & robustness (read before trusting it with real work)
 
-Directive is a capable hobby interpreter that was created using Claude.ai,
-tested with the bundled examples, a set of targeted stress tests, and an AddressSanitizer/UBSan/LeakSanitizer pass.
-It has **not** been fuzzed at scale or security-audited to production-runtime standards.
+Directive is a capable hobby interpreter, tested with the bundled examples, a set
+of targeted stress tests, and an AddressSanitizer/UBSan/LeakSanitizer pass. It has
+**not** been fuzzed at scale or security-audited to production-runtime standards.
 Concretely:
 
 - **It is not a security sandbox.** Like VBScript, it deliberately exposes powerful
