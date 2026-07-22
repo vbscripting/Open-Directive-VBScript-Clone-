@@ -17,6 +17,7 @@ engine actually implements.
 
 ```
 directive script.directive          # run a file (console build)
+directive script.directive a b c    # run a file, passing arguments (Directive.Arguments)
 directive -e "directive.echo 1+1"   # run an inline snippet
 directivew script.directive         # GUI build: Echo/Input via message boxes
 ```
@@ -201,10 +202,33 @@ Object identity `Is` · Logical/bitwise `And  Or  Not  Xor  Eqv  Imp`.
 | Member | Signature | Notes |
 |---|---|---|
 | `Echo` | `Directive.Echo a, b, …` | space-joined; objects use their default member |
+| `Arguments` (alias `Args`) | `Directive.Arguments` | command-line args collection (see below) |
 | `StdOut` / `StdErr` / `StdIn` | stream objects with `.Write`/`.WriteLine`/`.ReadLine`/`.ReadAll` | |
 | `Sleep` | `Directive.Sleep ms` | |
 | `Quit` | `Directive.Quit [code]` | |
 | `ScriptName` / `ScriptFullName` / `ScriptPath` (alias `ScriptDir`) | path info | |
+
+**`Directive.Arguments`** — a 0-based collection of the arguments passed after the
+script on the command line (the WSH `WScript.Arguments` equivalent; the name is
+always `Directive`, there is no `WScript` alias):
+
+| Member | Signature |
+|---|---|
+| `Count` (alias `Length`) | `.Count` |
+| `Item` (default) | `.Item(i)` / `Directive.Arguments(i)` — 0-based |
+| For Each | iterates the argument strings |
+
+```
+directive myscript.directive one two "three with spaces" file.txt
+```
+```vbscript
+For Each a In Directive.Arguments
+    directive.echo a
+Next
+```
+On Windows, associate the `.directive` extension with `directive.exe "%1" %*`
+(or `directivew.exe "%1" %*`) so that dropping files onto a script passes their
+paths through as arguments.
 
 ### 6.2 `Dictionary` — `New Dictionary`  ✔ tested
 Keys are **typed**: numeric `1` ≠ string `"1"`; `1` and `1.0` coincide; objects

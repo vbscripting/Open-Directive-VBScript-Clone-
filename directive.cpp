@@ -1254,14 +1254,42 @@ struct ConsoleStream : IObject {
 };
 
 // ---- Directive (host object; replaces WScript) ----
+// WScript.Arguments-style collection of the command-line arguments passed to the
+// script (0-based, like WSH). Supports Count/Length, Item(i), the default index
+// Arguments(i), and For Each iteration.
+struct ArgumentsObject : IObject {
+    std::vector<Value> items;
+    ArgumentsObject() = default;
+    explicit ArgumentsObject(const std::vector<std::string>& a) { for (auto& s : a) items.push_back(Value::str(s)); }
+    std::string typeName() const override { return "Arguments"; }
+    Value get(Interpreter&, const std::string& name, std::vector<Value>& args) override {
+        std::string n = toLower(name);
+        if (n == "count" || n == "length") return Value::integer((int32_t)items.size());
+        if (n.empty() || n == "item") {
+            if (args.empty()) raiseErr(450, "Wrong number of arguments");
+            long i = (long)args[0].toI64();
+            if (i < 0 || i >= (long)items.size()) raiseErr(9, "Subscript out of range");
+            return items[(size_t)i];
+        }
+        raiseErr(438, "Arguments: unknown member " + name);
+    }
+    bool enumerate(Interpreter&, std::vector<Value>& out) override { out = items; return true; }
+};
+
 struct DirectiveObject : IObject {
     std::string scriptName = "script.directive";
     std::string scriptFullName;                 // absolute path of the running script ("" for -e/stdin)
     std::string scriptDir;                       // directory containing the script (AutoIt @ScriptDir)
+    std::vector<std::string> scriptArgs;         // command-line arguments after the script path
     std::string typeName() const override { return "Directive"; }
     Value get(Interpreter& in, const std::string& name, std::vector<Value>& args) override {
         (void)in;
         std::string n = toLower(name);
+        if (n == "arguments" || n == "args") {
+            auto ao = std::make_shared<ArgumentsObject>(scriptArgs);
+            if (!args.empty()) return ao->get(in, "", args);   // Directive.Arguments(i) -> item i
+            return Value::object(ao);
+        }
         if (n == "echo") {
             std::string out;
             for (size_t k = 0; k < args.size(); ++k) { if (k) out += " "; out += args[k].toConcatStr(); }
@@ -2071,6 +2099,7 @@ public:
         directiveObj->scriptDir = dir;
         if (!fullPath.empty()) directiveObj->scriptName = fs::path(fullPath).filename().string();
     }
+    void setArguments(const std::vector<std::string>& a) { if (directiveObj) directiveObj->scriptArgs = a; }
     Value callClassMethod(ClassInstance* self, StmtP decl, std::vector<Value>& argv) {
         return invoke(decl, argv, self, nullptr);
     }
@@ -3405,23 +3434,31 @@ static int runMain(int argc, char** argv) {
 #endif
     std::string source, path;
     bool inline_mode = false;
+    bool haveSource = false;                 // set once the script (file, -e, or stdin) is determined
+    std::vector<std::string> scriptArgs;     // everything after the script becomes Directive.Arguments
 
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
-        if (arg == "-e" || arg == "--eval") {
-            if (i + 1 < argc) { source = argv[++i]; inline_mode = true; }
+        if (!haveSource && (arg == "-e" || arg == "--eval")) {
+            if (i + 1 < argc) { source = argv[++i]; inline_mode = true; haveSource = true; }
             else { ui::error("directive: -e requires an argument"); return 2; }
-        } else if (arg == "-h" || arg == "--help") {
+        } else if (!haveSource && (arg == "-h" || arg == "--help")) {
             ui::echo("Directive (Open Directive) - a VBScript-like scripting language\n"
                      "Usage:\n"
-                     "  directive <script.directive>   run a script file\n"
-                     "  directive -e \"code\"            run an inline snippet\n"
-                     "  directive -                    read script from stdin");
+                     "  directive <script.directive> [args...]   run a script file\n"
+                     "  directive -e \"code\" [args...]            run an inline snippet\n"
+                     "  directive - [args...]                    read script from stdin\n"
+                     "\n"
+                     "Any arguments after the script are readable from the script via\n"
+                     "Directive.Arguments (0-based): Directive.Arguments.Count,\n"
+                     "Directive.Arguments(0), and 'For Each a In Directive.Arguments'.");
             return 0;
-        } else if (arg == "-") {
-            source = readAll(std::cin); inline_mode = true;
-        } else if (path.empty()) {
-            path = arg;
+        } else if (!haveSource && arg == "-") {
+            source = readAll(std::cin); inline_mode = true; haveSource = true;
+        } else if (!haveSource) {
+            path = arg; haveSource = true;
+        } else {
+            scriptArgs.push_back(arg);       // positional (or flag-looking) arg belonging to the script
         }
     }
 
@@ -3455,6 +3492,7 @@ static int runMain(int argc, char** argv) {
         if (baseDir.empty()) baseDir = fs::current_path(ec).string();
     }
     interp.setScriptInfo(fullPath, baseDir);
+    interp.setArguments(scriptArgs);
 
     try {
         Lexer lexer(source);
